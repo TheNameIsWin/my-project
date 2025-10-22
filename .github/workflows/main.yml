@@ -1,0 +1,48 @@
+name: Sync with ClickUp
+
+on:
+  push:
+    branches:
+      - main  # Ya koi bhi branch jisme aap kaam kar rahe hain
+
+jobs:
+  create_and_update_task:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout the code
+      uses: actions/checkout@v2
+
+    - name: Create Task in ClickUp
+      env:
+        CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}  # GitHub Secrets se token lena
+      run: |
+        # Task create karte hain
+        response=$(curl --request POST \
+          --url https://api.clickup.com/api/v2/list/YOUR_LIST_ID/task \
+          --header "Authorization: $CLICKUP_API_TOKEN" \
+          --header "Content-Type: application/json" \
+          --data '{
+            "name": "GitHub Action Task",
+            "description": "This task is created by GitHub Actions",
+            "status": "to do",
+            "priority": 3
+          }')
+        
+        # Task ID extract karte hain
+        TASK_ID=$(echo $response | jq -r '.id')
+        echo "Task Created with ID: $TASK_ID"
+        echo "TASK_ID=$TASK_ID" >> $GITHUB_ENV  # Task ID ko GitHub environment variable mein save karte hain
+
+    - name: Update Task in ClickUp
+      env:
+        CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
+      run: |
+        # Task update karte hain
+        curl --request PUT \
+          --url https://api.clickup.com/api/v2/task/${{ env.TASK_ID }} \
+          --header "Authorization: $CLICKUP_API_TOKEN" \
+          --header "Content-Type: application/json" \
+          --data '{
+            "status": "in progress"
+          }'
