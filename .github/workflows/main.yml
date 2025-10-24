@@ -1,72 +1,56 @@
-name: Sync with ClickUp (Auto)
+name: Sync with ClickUp (Auto Task + PR Notification)
 
 on:
   push:
     branches:
       - main
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 jobs:
-  create_and_update_task:
+  clickup_integration:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - name: Checkout the repository
+      uses: actions/checkout@v3
 
-    - name: Install jq
-      run: sudo apt-get update && sudo apt-get install -y jq
-
-    - name: Fetch ClickUp User ID
-      id: get_user
-      env:
-        CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
-      run: |
-        # Get current user info from ClickUp
-        response=$(curl --silent -H "Authorization: $CLICKUP_API_TOKEN" https://api.clickup.com/api/v2/user)
-        USER_ID=$(echo "$response" | jq -r '.user.id')
-        if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
-          echo "❌ Could not fetch ClickUp user ID"
-          exit 1
-        fi
-        echo "✅ ClickUp User ID: $USER_ID"
-        echo "USER_ID=$USER_ID" >> $GITHUB_ENV
-
-    - name: Create Task in ClickUp
+    - name: Create or Update ClickUp Task
       env:
         CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
         CLICKUP_LIST_ID: ${{ secrets.CLICKUP_LIST_ID }}
+        GITHUB_ACTOR: ${{ github.actor }}
+        GITHUB_REPO: ${{ github.repository }}
+        GITHUB_PR_TITLE: ${{ github.event.pull_request.title || '' }}
+        GITHUB_PR_URL: ${{ github.event.pull_request.html_url || '' }}
+        GITHUB_COMMIT_MESSAGE: ${{ github.event.head_commit.message || '' }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
       run: |
-        echo "Creating task in list: $CLICKUP_LIST_ID for user: $USER_ID"
+        echo "Event: $GITHUB_EVENT_NAME"
+        echo "List ID: $CLICKUP_LIST_ID"
 
-        response=$(curl --silent --request POST \
-          --url "https://api.clickup.com/api/v2/list/${CLICKUP_LIST_ID}/task" \
-          --header "Authorization: $CLICKUP_API_TOKEN" \
-          --header "Content-Type: application/json" \
-          --data '{
-            "name": "GitHub Commit: '"${GITHUB_SHA:0:7}"'",
-            "description": "Task auto-created by GitHub Actions for commit '"${GITHUB_SHA}"' in '"${GITHUB_REPOSITORY}"'.\nCommit URL: https://github.com/'"${GITHUB_REPOSITORY}"'/commit/'"${GITHUB_SHA}"'",
-            "status": "to do",
-            "priority": 3,
-            "assignees": ['"${USER_ID}"']
-          }')
-
-        echo "Response: $response"
-        TASK_ID=$(echo "$response" | jq -r '.id')
-        if [ "$TASK_ID" = "null" ] || [ -z "$TASK_ID" ]; then
-          echo "❌ Task not created"
-          exit 1
+        if [ "$GITHUB_EVENT_NAME" == "pull_request" ]; then
+          echo "📣 PR Detected! Creating a PR-related task..."
+          curl --request POST \
+            --url https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task \
+            --header "Authorization: $CLICKUP_API_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "{
+              \"name\": \"PR: $GITHUB_PR_TITLE\",
+              \"description\": \"Pull Request by $GITHUB_ACTOR in $GITHUB_REPO\n\n🔗 $GITHUB_PR_URL\",
+              \"status\": \"to do\",
+              \"priority\": 2
+            }"
+        else
+          echo "🚀 Push detected! Creating commit-related task..."
+          curl --request POST \
+            --url https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task \
+            --header "Authorization: $CLICKUP_API_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "{
+              \"name\": \"Commit: $GITHUB_COMMIT_MESSAGE\",
+              \"description\": \"Commit pushed by $GITHUB_ACTOR in $GITHUB_REPO\",
+              \"status\": \"in progress\",
+              \"priority\": 3
+            }"
         fi
-        echo "✅ Task Created with ID: $TASK_ID"
-        echo "TASK_ID=$TASK_ID" >> $GITHUB_ENV
-
-    - name: Update Task Status
-      env:
-        CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
-      run: |
-        echo "Updating task status to 'in progress'..."
-        curl --silent --request PUT \
-          --url "https://api.clickup.com/api/v2/task/$TASK_ID" \
-          --header "Authorization: $CLICKUP_API_TOKEN" \
-          --header "Content-Type: application/json" \
-          --data '{"status": "in progress"}'
-        echo "✅ Task status updated to in progress!"
