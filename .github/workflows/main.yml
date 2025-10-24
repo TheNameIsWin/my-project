@@ -1,56 +1,57 @@
-name: Sync with ClickUp (Auto Task + PR Notification)
+name: Auto Sync with ClickUp (PR + Status Update)
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
   push:
     branches:
       - main
-  pull_request:
-    types: [opened, synchronize, reopened]
 
 jobs:
-  clickup_integration:
+  clickup_sync:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout the repository
+    - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Create or Update ClickUp Task
+    - name: Sync Task with ClickUp
       env:
         CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
         CLICKUP_LIST_ID: ${{ secrets.CLICKUP_LIST_ID }}
-        GITHUB_ACTOR: ${{ github.actor }}
-        GITHUB_REPO: ${{ github.repository }}
-        GITHUB_PR_TITLE: ${{ github.event.pull_request.title || '' }}
-        GITHUB_PR_URL: ${{ github.event.pull_request.html_url || '' }}
-        GITHUB_COMMIT_MESSAGE: ${{ github.event.head_commit.message || '' }}
         GITHUB_EVENT_NAME: ${{ github.event_name }}
+        PR_TITLE: ${{ github.event.pull_request.title || '' }}
+        PR_URL: ${{ github.event.pull_request.html_url || '' }}
+        PR_STATE: ${{ github.event.pull_request.state || '' }}
+        PR_MERGED: ${{ github.event.pull_request.merged || false }}
+        ACTOR: ${{ github.actor }}
       run: |
-        echo "Event: $GITHUB_EVENT_NAME"
-        echo "List ID: $CLICKUP_LIST_ID"
+        echo "GitHub Event: $GITHUB_EVENT_NAME"
 
+        # Identify ClickUp Status
         if [ "$GITHUB_EVENT_NAME" == "pull_request" ]; then
-          echo "📣 PR Detected! Creating a PR-related task..."
-          curl --request POST \
-            --url https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task \
-            --header "Authorization: $CLICKUP_API_TOKEN" \
-            --header "Content-Type: application/json" \
-            --data "{
-              \"name\": \"PR: $GITHUB_PR_TITLE\",
-              \"description\": \"Pull Request by $GITHUB_ACTOR in $GITHUB_REPO\n\n🔗 $GITHUB_PR_URL\",
-              \"status\": \"to do\",
-              \"priority\": 2
-            }"
+          if [ "$PR_MERGED" == "true" ]; then
+            STATUS="complete"
+          elif [ "$PR_STATE" == "open" ]; then
+            STATUS="in progress"
+          else
+            STATUS="to do"
+          fi
         else
-          echo "🚀 Push detected! Creating commit-related task..."
-          curl --request POST \
-            --url https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task \
-            --header "Authorization: $CLICKUP_API_TOKEN" \
-            --header "Content-Type: application/json" \
-            --data "{
-              \"name\": \"Commit: $GITHUB_COMMIT_MESSAGE\",
-              \"description\": \"Commit pushed by $GITHUB_ACTOR in $GITHUB_REPO\",
-              \"status\": \"in progress\",
-              \"priority\": 3
-            }"
+          STATUS="in progress"
         fi
+
+        echo "🌀 Setting ClickUp status: $STATUS"
+
+        # Create or update task
+        response=$(curl --request POST \
+          --url https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task \
+          --header "Authorization: $CLICKUP_API_TOKEN" \
+          --header "Content-Type: application/json" \
+          --data "{
+            \"name\": \"PR: $PR_TITLE\",
+            \"description\": \"PR by $ACTOR\n🔗 $PR_URL\",
+            \"status\": \"$STATUS\"
+          }")
+
+        echo "Response: $response"
