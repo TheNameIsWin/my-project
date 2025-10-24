@@ -1,4 +1,4 @@
-name: Auto Sync with ClickUp (PR + Status Update)
+name: Auto Sync PR Status with ClickUp
 
 on:
   pull_request:
@@ -8,28 +8,28 @@ on:
       - main
 
 jobs:
-  clickup_sync:
+  clickup_status_sync:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Sync Task with ClickUp
+    - name: Sync PR with ClickUp
       env:
         CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
         CLICKUP_LIST_ID: ${{ secrets.CLICKUP_LIST_ID }}
-        GITHUB_EVENT_NAME: ${{ github.event_name }}
         PR_TITLE: ${{ github.event.pull_request.title || '' }}
         PR_URL: ${{ github.event.pull_request.html_url || '' }}
         PR_STATE: ${{ github.event.pull_request.state || '' }}
         PR_MERGED: ${{ github.event.pull_request.merged || false }}
         ACTOR: ${{ github.actor }}
+        EVENT: ${{ github.event_name }}
       run: |
-        echo "GitHub Event: $GITHUB_EVENT_NAME"
+        echo "⚙️ GitHub Event: $EVENT"
 
-        # Identify ClickUp Status
-        if [ "$GITHUB_EVENT_NAME" == "pull_request" ]; then
+        # Set status based on event type
+        if [ "$EVENT" == "pull_request" ]; then
           if [ "$PR_MERGED" == "true" ]; then
             STATUS="complete"
           elif [ "$PR_STATE" == "open" ]; then
@@ -41,17 +41,33 @@ jobs:
           STATUS="in progress"
         fi
 
-        echo "🌀 Setting ClickUp status: $STATUS"
+        echo "🌀 ClickUp Status: $STATUS"
 
-        # Create or update task
-        response=$(curl --request POST \
-          --url https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task \
-          --header "Authorization: $CLICKUP_API_TOKEN" \
-          --header "Content-Type: application/json" \
-          --data "{
-            \"name\": \"PR: $PR_TITLE\",
-            \"description\": \"PR by $ACTOR\n🔗 $PR_URL\",
-            \"status\": \"$STATUS\"
-          }")
+        # Check if task already exists with same name
+        existing_task=$(curl --silent --request GET \
+          --url "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task?archived=false" \
+          --header "Authorization: $CLICKUP_API_TOKEN" | jq -r ".tasks[] | select(.name==\"PR: $PR_TITLE\") | .id")
 
-        echo "Response: $response"
+        if [ -z "$existing_task" ]; then
+          echo "🆕 Task not found — creating new one..."
+          response=$(curl --silent --request POST \
+            --url https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task \
+            --header "Authorization: $CLICKUP_API_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "{
+              \"name\": \"PR: $PR_TITLE\",
+              \"description\": \"🔗 $PR_URL\nCreated by $ACTOR\",
+              \"status\": \"$STATUS\"
+            }")
+          echo "✅ New Task Created"
+        else
+          echo "🔁 Existing Task Found ($existing_task) — updating status..."
+          curl --silent --request PUT \
+            --url "https://api.clickup.com/api/v2/task/$existing_task" \
+            --header "Authorization: $CLICKUP_API_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "{
+              \"status\": \"$STATUS\"
+            }"
+          echo "✅ Task Updated to $STATUS"
+        fi
