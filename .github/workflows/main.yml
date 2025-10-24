@@ -15,6 +15,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      # ✅ Ensure jq is installed or updated
+      - name: Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
       - name: Sync PR with ClickUp
         env:
           CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
@@ -37,7 +43,7 @@ jobs:
           # 🧠 Determine ClickUp status (Match EXACT names in your workspace)
           if [ "$EVENT" == "pull_request" ]; then
             if [ "$PR_MERGED" == "true" ]; then
-              STATUS="Done"
+              STATUS="Completed"  # ✅ Update ClickUp when PR is merged
             elif [ "$PR_STATE" == "open" ]; then
               STATUS="In Progress"
             else
@@ -73,7 +79,7 @@ jobs:
             echo "✅ New ClickUp Task Created — ID: $new_task_id"
             TASK_URL="https://app.clickup.com/t/$new_task_id"
 
-            # Comment back on PR with ClickUp link
+            # 💬 Comment back on PR with ClickUp link
             curl -s -H "Authorization: token $GITHUB_TOKEN" \
               -X POST \
               -d "{\"body\": \"🆕 **ClickUp Task Created:** [View Task]($TASK_URL)\\n📌 Status: $STATUS\"}" \
@@ -92,7 +98,7 @@ jobs:
 
             echo "✅ Task Updated to Status: $STATUS"
 
-            # Comment on PR about status change
+            # 💬 Comment on PR about status change
             curl -s -H "Authorization: token $GITHUB_TOKEN" \
               -X POST \
               -d "{\"body\": \"🔄 **ClickUp Task Updated:** Status changed to *$STATUS*\"}" \
