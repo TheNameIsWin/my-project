@@ -19,12 +19,14 @@ jobs:
         env:
           CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
           CLICKUP_LIST_ID: ${{ secrets.CLICKUP_LIST_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_TITLE: ${{ github.event.pull_request.title || '' }}
           PR_URL: ${{ github.event.pull_request.html_url || '' }}
           PR_STATE: ${{ github.event.pull_request.state || '' }}
           PR_MERGED: ${{ github.event.pull_request.merged || false }}
           ACTOR: ${{ github.actor }}
           EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || 0 }}
         run: |
           echo "⚙️ GitHub Event: $EVENT"
           echo "🔍 PR_TITLE: $PR_TITLE"
@@ -32,7 +34,7 @@ jobs:
           echo "🔍 PR_MERGED: $PR_MERGED"
           echo "🔍 ACTOR: $ACTOR"
 
-          # Determine ClickUp status based on PR state
+          # 🧠 Determine ClickUp status (Match EXACT names in your workspace)
           if [ "$EVENT" == "pull_request" ]; then
             if [ "$PR_MERGED" == "true" ]; then
               STATUS="Done"
@@ -47,14 +49,17 @@ jobs:
 
           echo "🌀 ClickUp Status to Apply: $STATUS"
 
-          # Fetch existing task by PR title
-          existing_task=$(curl --silent --request GET \
+          # 🧩 Fetch all tasks in ClickUp list
+          tasks_json=$(curl --silent --request GET \
             --url "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task?archived=false" \
-            --header "Authorization: $CLICKUP_API_TOKEN" | jq -r ".tasks[] | select(.name==\"PR: $PR_TITLE\") | .id" | head -n1)
+            --header "Authorization: $CLICKUP_API_TOKEN")
 
+          existing_task=$(echo "$tasks_json" | jq -r ".tasks[] | select(.name==\"PR: $PR_TITLE\") | .id" | head -n1)
+
+          # 🧱 If no task exists, create one
           if [ -z "$existing_task" ]; then
-            echo "🆕 No existing task found — creating a new one..."
-            response=$(curl --silent --request POST \
+            echo "🆕 No existing task found — creating new one..."
+            create_response=$(curl --silent --write-out "\nHTTP_STATUS:%{http_code}\n" --request POST \
               --url "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task" \
               --header "Authorization: $CLICKUP_API_TOKEN" \
               --header "Content-Type: application/json" \
@@ -63,19 +68,35 @@ jobs:
                 \"description\": \"🔗 [Pull Request Link]($PR_URL)\\n👤 Created by: $ACTOR\",
                 \"status\": \"$STATUS\"
               }")
-            
-            new_task_id=$(echo "$response" | jq -r '.id')
-            echo "✅ New ClickUp task created with ID: $new_task_id"
+
+            new_task_id=$(echo "$create_response" | jq -r '.id')
+            echo "✅ New ClickUp Task Created — ID: $new_task_id"
+            TASK_URL="https://app.clickup.com/t/$new_task_id"
+
+            # Comment back on PR with ClickUp link
+            curl -s -H "Authorization: token $GITHUB_TOKEN" \
+              -X POST \
+              -d "{\"body\": \"🆕 **ClickUp Task Created:** [View Task]($TASK_URL)\\n📌 Status: $STATUS\"}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments"
+
           else
-            echo "🔁 Existing task found (ID: $existing_task) — updating status..."
-            curl --silent --request PUT \
+            # 🛠 Update existing task
+            echo "🔁 Existing Task Found (ID: $existing_task) — Updating status..."
+            update_response=$(curl --silent --write-out "\nHTTP_STATUS:%{http_code}\n" --request PUT \
               --url "https://api.clickup.com/api/v2/task/$existing_task" \
               --header "Authorization: $CLICKUP_API_TOKEN" \
               --header "Content-Type: application/json" \
               --data "{
                 \"status\": \"$STATUS\"
-              }"
-            echo "✅ Task updated to status: $STATUS"
+              }")
+
+            echo "✅ Task Updated to Status: $STATUS"
+
+            # Comment on PR about status change
+            curl -s -H "Authorization: token $GITHUB_TOKEN" \
+              -X POST \
+              -d "{\"body\": \"🔄 **ClickUp Task Updated:** Status changed to *$STATUS*\"}" \
+              "https://api.github.com/repos/${{ github.repository }}/issues/$PR_NUMBER/comments"
           fi
 
-          echo "🎯 ClickUp sync completed successfully!"
+          echo "🎯 ClickUp Sync Completed Successfully!"
