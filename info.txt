@@ -1,1 +1,0 @@
-for confirmation I'm rechecking and raise one more PR for my current repo with the help of create another file called info and the file is a text file.
